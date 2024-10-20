@@ -90,7 +90,7 @@
              (body
               (div (@ (class "container"))
                    (div (@ (class "nav"))
-                        (ul (li ,(link "(blog . (lispy . tech))" "/"))
+                        (ul (li ,(link "(blog . (coldboot . org))" "/"))
                             (li (@ (class "fade-text")) " ")
                             (li ,(link "#:about" "/about.html"))
                             (li ,(link "#:posts" "/index.html")))

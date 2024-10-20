@@ -32,7 +32,7 @@
                  ".")
               (p "You can contact me via e-mail at shahsarthakw at gmail dot com.")))))
 
-(site #:title "(blog . (lispy . tech))"
+(site #:title "(blog . (coldboot . org))"
       #:domain "blog.coldboot.org"
       #:default-metadata
       '((author . "Sarthak Shah")
