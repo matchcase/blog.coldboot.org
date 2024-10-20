@@ -1,0 +1,39 @@
+#+TITLE:An Introduction to Parameterized Packages
+#+DATE: 2023-05-09 2:40
+#+TAGS: Guix, GSoC, Scheme
+#+OPTIONS: toc:nil num:nil
+#+HAUNT_BASE_DIR: /home/sixtyfour/Documents/Code/Guile/blog
+
+I will be working on bringing Parameterized Packages to [[https://guix.gnu.org][GNU Guix]] this summer as a part of the [[https://summerofcode.withgoogle.com/][Google Summer of Code]] program under the mentorship of Pjotr Prins and Gábor Boskovits.
+This post will go over the basic ideas behind Parameterized Packages, their benefits and how I am planning on implementing them.
+* What are Parameterized Packages?
+Parameterized packages will provide users with a simple way to configure many aspects of packages, à la Gentoo USE flags.
+
+GNU Guix is the only GNU/Linux distribution capable of achieving a [[https://guix.gnu.org/en/blog/2023/the-full-source-bootstrap-building-from-source-all-the-way-down/][full-source bootstrap]], and this comes with many unique advantages.
+Every package in Guix can be built from source, and as a result it is possible to configure a wide variety of options for each package that just aren't exposed on binary-based distributions using [[https://guix.gnu.org/manual/en/html_node/Package-Transformation-Options.html][Package Transformations]]. While package transformations are extremely powerful, they require some experience with packaging software for Guix and are generally expected to be used by power users for applications such as [[https://hpc.guix.info][High-Performance Computing]].
+
+Parameterized Packages aim to not only bring the benefits of package transformations to all users, but to also make it possible to globally specify some aspects to include or exclude from packages similar to [[https://wiki.gentoo.org/wiki/USE_flag][Gentoo's USE flags]].
+
+Some of the benefits of Parameterized Packages are:
+1. Significantly smaller binaries
+2. More fine-grained control over the entire system
+3. Access to additional features only accessible through compile-time options
+Among many more.
+* Example Usage
+(Edited - 15th Sep 2023)
+To avoid confusion, I have removed the example from this section.
+Owing to community feedback, the syntax for parameterization has changed a lot from the original draft.
+To see a concrete example of parameters in action, please see the [[https://blog.coldboot.org/parameterized-packages-the-second-update.html][second update]].
+* What if a package record does not contain the parameter value?
+In the instance that parameter values are not specified, the package will be used in its default state by all of the packages depending on it. /In general,/ parameters propogate to dependencies if a valid configuration can be acheived with them, and if this is not possible the default state of the package is used. This will help with the gradual adoption of package parameters, as not every package will have to specify parameters and at the same time the packages specifying parameters will be able to use them even if their dependencies do not have the given parameter.
+
+
+One awesome feature of this arrangement is that a user could have two packages with conflicting parameters but they would both work on the system thanks to Guix building both versions of dependencies. This would *not* work on imperative package managers with similar functionality. For example if a music player application depends on mpd built with pulseaudio while another depends on it built with jack, Guix will create two versions of mpd, one built with each so that both of these packages may coexist.
+* More on parameter symbols
+/Fairly generic/ options such as x11, gcc-oflag or locale will be accepted as global parameters. Most global parameters will have pre-defined /standard transforms/ for every build system they are valid for. Note that having too many parameters in a given package's definition will lead to combinatorial explosion of states, and thus it is best to limit the number of parameters to a manageable amount.
+I will be attempting to add 10~20 global parameters after finishing this project.
+
+* Conclusion
+Parameterized Packages have the potential to add more functionality to GNU Guix for all users, however they will require the *feedback* and support of the entire Guix community. I would immensely appreciate any kind of suggestions and comments in the new thread on Parameterized Packages which can be found in the mailing list, especially suggestions on what parameter symbols users would like to use.
+
+Happy Hacking!
