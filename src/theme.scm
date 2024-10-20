@@ -99,7 +99,7 @@
                    (footer (@ (class "text-center"))
                            (script (@ (src "js/switch.js")))
                            (p (@ (class "copyright"))
-                              "© 2023 Sarthak Shah • Built with "
+                              "© 2023-24 Sarthak Shah • Built with "
                               ,(link "Haunt" "https://dthompson.us/projects/haunt.html"))
                            (link (@ (rel "webmention")
                                     (href ,(string-append "https://webmention.io/blog.coldboot.org/"
