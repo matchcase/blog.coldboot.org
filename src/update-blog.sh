@@ -3,9 +3,9 @@
 cd ~/Documents/Code/Guile/blog
 haunt build
 cd ..
-cp -r blog/site/* git-blog/
-cp -r blog/* git-blog/src/
-cd git-blog/src/
+cp -r blog/site/* git-blog-coldboot/
+cp -r blog/* git-blog-coldboot/src/
+cd git-blog-coldboot/src/
 rm -r site
 rm */*.~undo-tree~
 cd ..

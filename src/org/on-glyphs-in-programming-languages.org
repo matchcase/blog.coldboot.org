@@ -1,0 +1,9 @@
+#+TITLE:Why I Think Glyphs Don't Improve Programming Languages
+
+Array-based programming languages like APL and BQN have a long-standing tradition of using glyphs to represent operations, which can be traced back to APL. In this short post I'll go over why I think it might not be beneficial to have glyphs, and might actually be detrimental to the languages.
+* What are Glyphs?
+* Why do Array-based Languages use so many Glyphs?
+* Why I think that they are not useful
+* Why I think that they might be detrimental to the language
+* Potential benefits to using glyphs?
+* Closing thoughts
