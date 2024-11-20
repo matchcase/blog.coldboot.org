@@ -16,12 +16,12 @@
    "About Me"
    "about.html"
    `(div (@ (style "display:flex")) 
-         (img (@ (src "images/suigintou-sicp.jpg") 
+         (img (@ (src "images/cel7t-yui.png") 
                  (style "object-fit:contain; align-self:flex-start; 
                          width: 250px; padding-top: 20px; padding-bottom: 20px")))
          (div (@ (style "flex: 1 1 auto; padding-left: 30px"))
               (h2 "Hello 👋")
-              (p "My name is Sarthak (IPA: /s̪äːɾ.t̪ʰək/).")
+              (p "My name is Sarthak.")
               (p "I like computers, mathematics and music.")
               (p "I worked on "
                  ,(anchor "Parameterized Packages" "https://summerofcode.withgoogle.com/programs/2023/projects/heQYLzrz")
@@ -30,6 +30,7 @@
                  " intern at "
                  ,(anchor "GNU Guix" "https://guix.gnu.org")
                  ".")
+              (p "I've also worked as an assistant HPC admin, and a Security Engineering Intern.")
               (p "You can contact me via e-mail at shahsarthakw at gmail dot com.")))))
 
 (site #:title "(blog . (coldboot . org))"
