@@ -21,17 +21,15 @@
                          width: 250px; padding-top: 20px; padding-bottom: 20px")))
          (div (@ (style "flex: 1 1 auto; padding-left: 30px"))
               (h2 "Hello 👋")
-              (p "My name is Sarthak.")
-              (p "I like computers, mathematics and music.")
+              (p "My name is Sarthak, and I like computers, mathematics, pixel art and music.")
               (p "I worked on "
                  ,(anchor "Parameterized Packages" "https://summerofcode.withgoogle.com/programs/2023/projects/heQYLzrz")
                  " as a " 
                  ,(anchor "GSoC" "https://summerofcode.withgoogle.com") 
                  " intern at "
                  ,(anchor "GNU Guix" "https://guix.gnu.org")
-                 ".")
-              (p "I've also worked as an assistant HPC admin, and a Security Engineering Intern.")
-              (p "You can contact me via e-mail at shahsarthakw at gmail dot com.")))))
+                 ". I have also worked as an assistant HPC admin, and a Security Engineering Intern.")
+              (p "The sprite on the left is Hirasawa Yui from the manga series " (i"K-On!") ", made in a "(i "Yume Nikki") "-esque style.")))))
 
 (site #:title "(blog . (coldboot . org))"
       #:domain "blog.coldboot.org"
