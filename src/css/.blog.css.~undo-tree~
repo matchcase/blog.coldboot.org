@@ -1,5 +1,0 @@
-(undo-tree-save-format-version . 1)
-"b108790528e852c349d0189127e4377238c2dad5"
-[nil nil nil nil (26391 62212 123532 238000) 0 nil]
-([nil current ((#("Overpass" 0 8 (face (prism-level-1-strings font-lock-string-face) fontified nil)) . 1014) (undo-tree-id0 . -8) (1009 . 1014) (#("Overpass" 0 8 (face (prism-level-1-strings font-lock-string-face) fontified nil)) . 1134) (1129 . 1134) (#("Overpass" 0 8 (fontified nil)) . 2403) (2398 . 2403) (t 25781 46969 0 0)) nil (26391 62212 123491 313000) 0 nil])
-nil
