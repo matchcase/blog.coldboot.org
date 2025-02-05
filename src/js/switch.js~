@@ -1,14 +1,17 @@
 // Switch for Light/Dark Mode
 
-const themeSwitch = document.getElementById("theme-switch");
-const theme = localStorage.getItem("theme");
-document.documentElement.setAttribute("theme", theme);
-themeSwitch.checked = (theme === "dark");
+var theme = localStorage.getItem("theme") || "light";
+document.documentElement.setAttribute("data-theme", theme);
 
-function flipSwitch(e) {
-    localStorage.setItem("theme", e.target.checked ? "dark" : "light");
-    document.documentElement.setAttribute("theme", e.target.checked ? "dark" : "light");
-  document.getElementById("icon-path").setAttribute("fill", e.target.checked? "yellow" : "black");
+const modeBox = document.querySelector("#modeBox");
+modeBox.checked = (theme === "dark");
+
+function themeSwitch(e) {
+    var root = document.querySelector(":root");
+    root.style.setProperty("--transitionSpeed", "0.5s");
+    let mode = e.target.checked ? "dark" : "light";
+    localStorage.setItem("theme", mode);
+    document.documentElement.setAttribute("data-theme", mode);
 }
 
-themeSwitch.addEventListener("change", flipSwitch, false);
+modeBox.addEventListener("change", themeSwitch, false);
