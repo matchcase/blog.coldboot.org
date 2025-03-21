@@ -92,8 +92,8 @@
                    (div (@ (class "nav"))
                         (ul (li ,(link "(blog . (coldboot . org))" "/"))
                             (li (@ (class "fade-text")) " ")
-                            (li ,(link "#:about" "/about.html"))
-                            (li ,(link "#:posts" "/index.html")))
+                            (li ,(link "(about)" "/about.html"))
+                            (li ,(link "(posts)" "/index.html")))
                         ,%mode-button)
                    ,body
                    (footer (@ (class "text-center"))
