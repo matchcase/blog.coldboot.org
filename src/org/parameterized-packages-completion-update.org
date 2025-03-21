@@ -6,7 +6,7 @@
 #+HAUNT_BASE_DIR: /home/sixtyfour/Documents/Code/Guile/blog
 
 This post is a small completion update for my [[https://summerofcode.withgoogle.com/programs/2023/projects/heQYLzrz][GSoC project]] on adding Parameterized Packages to [[https://guix.gnu.org][GNU Guix]].
-You can find the source code for the same on the main [[https://notabug.org/cel7t/guix-parameters][notabug]] repository or on the [[https://github.com/cel7t/guix-parameters/][github]] mirror.
+You can find the source code for the same on the main [[https://notabug.org/cel7t/guix-parameters][notabug]] repository or on the [[https://github.com/matchcase/guix-parameters/][github]] mirror.
 This post is broken into two parts; the first is a simple overview of the uses of parameters and the second answers some commonly asked questions.
 * What is Package Parameterization?
 In its current state, Package Parameterization makes it possible to add compile-time options to any Guix package, regardless of whether it was defined with support for a given compile-time option or not. This makes it a very powerful tool for hackers seeking to extend their packages in unorthodox and interesting ways. *But that's not all!* Parameters can be used to make any kind of changes to package definitions conditionally, making them very useful substitutes for unimplemented [[https://guix.gnu.org/manual/en/html_node/Package-Transformation-Options.html][package transformation options]] in a lot of cases.

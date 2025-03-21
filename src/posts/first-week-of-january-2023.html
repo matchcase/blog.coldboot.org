@@ -9,7 +9,7 @@ I decided to start writing a blog to talk about my ventures in programming and s
 <h2 id="org9b2e3f1">Torus Wrapper</h2>
 <div class="outline-text-2" id="text-org9b2e3f1">
 <p>
-One of the projects I poured a bunch of time into was <a href="https://github.com/cel7t/TorusWrapper">Torus Wrapper</a>, which was an effort to wrap transparent PNGs into tiles that can be tiled to make tiling wallpapers, tiling game assets, et cetera. A high-level overview of how this is done is that the program takes in a transparent png, finds the <b>biggest</b> rectangle <i>inside</i> it and then wraps the parts not fitting in the rectangle atop it. Here's an example of a tile created with it:
+One of the projects I poured a bunch of time into was <a href="https://github.com/matchcase/TorusWrapper">Torus Wrapper</a>, which was an effort to wrap transparent PNGs into tiles that can be tiled to make tiling wallpapers, tiling game assets, et cetera. A high-level overview of how this is done is that the program takes in a transparent png, finds the <b>biggest</b> rectangle <i>inside</i> it and then wraps the parts not fitting in the rectangle atop it. Here's an example of a tile created with it:
 <img src="../images/tile.png" alt="tile.png" />
 </p>
 </div>
@@ -29,7 +29,7 @@ For my personal site, I wrote the main site in <a href="https://clojurescript.or
 <h2 id="orgb804b0e">Tiny Improvements to my R6RS Infix Calculator</h2>
 <div class="outline-text-2" id="text-orgb804b0e">
 <p>
-I abstracted away a lot of the recursion in my <a href="https://github.com/cel7t/R6RS-Calculator">R6RS infix expression calculator</a> by defining a new macro to handle functions that iterate over a carry-forwarded list and adding the Clojure thread-first macro (-&gt;). I planned on implementing something called the <i>Nestedness Theorem</i>, which is that <i>the rightmost open paren is always safe to evaluate</i>. However, my current approach is more-or-less similar to this, hence I did not rewrite it. I also added additional error checking; the program now checks if parens are balanced.
+I abstracted away a lot of the recursion in my <a href="https://github.com/matchcase/R6RS-Calculator">R6RS infix expression calculator</a> by defining a new macro to handle functions that iterate over a carry-forwarded list and adding the Clojure thread-first macro (-&gt;). I planned on implementing something called the <i>Nestedness Theorem</i>, which is that <i>the rightmost open paren is always safe to evaluate</i>. However, my current approach is more-or-less similar to this, hence I did not rewrite it. I also added additional error checking; the program now checks if parens are balanced.
 </p>
 </div>
 </div>
