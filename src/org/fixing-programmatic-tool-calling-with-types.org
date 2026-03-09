@@ -1,0 +1,161 @@
+#+TITLE:Fixing Programmatic Tool Calling With Types
+#+DATE: 2026-03-10 13:37
+#+TAGS: OCaml, Type Theory, Large Language Models, Programming Languages
+#+OPTIONS: toc:nil num:nil
+#+HAUNT_BASE_DIR: /home/hack/Documents/Code/Guile/blog
+
+Anthropic recently introduced [[https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling][Programmatic Tool Calling]], which lets Large Language Models write Python programs to orchestrate multiple tool calls with loops, conditionals, and error handling. It is a very powerful method to have an agent run a huge number of tool calls without filling up its context window, and also avoid the latency of the usual call-one-tool-at-a-time loop.
+
+This approach works great in demos, however it runs into a number of issues in production, and they all have the same root cause: Python is /too expressive/ for this job. I created a small, /restricted/ programming language called [[https://github.com/matchcase/lambda-tool][λ-Tool]] in OCaml to solve this problem, and it catches four common tool calling issues at *compile time*, before a single tool call is made.
+
+* The Issues
+
+Say you have a support agent. A customer writes in: "I was charged twice." The LLM looks up the account, issues a refund, sends a reply. Here's the Python code it generates:
+#+BEGIN_SRC python
+account = await lookup_account(ticket.customer_id)
+refund = await issue_refund({
+    "account_id": account["id"],
+    "amount": account["last_charge_cents"]
+})
+await send_reply({
+    "to": account["email"],
+    "body": f"Refund of ${refund['amount'] / 100:.2f} processed. "
+            f"Transaction: {refund['tx_id']}"
+})
+#+END_SRC
+
+This passes the sandbox. Every test succeeds. And yet, it has /at least/ three bugs:
+
+- *Wrong field*
+  The account record has ~subscription_tier~. The LLM writes ~account["plan"]~ somewhere in the conditional logic. The mock returns a dict with everything the test expects, so the ~KeyError~ never fires. In production it crashes, but only after side effects have already happened.
+
+- *Double write*
+  ~issue_refund~ succeeds but the response times out. The LLM's error handling retries the call. The refund went through on the first attempt. Now the customer has been refunded twice.
+#+BEGIN_SRC python
+try:
+    refund = await issue_refund({"account_id": acct_id, "amount": 4999})
+except TimeoutError:
+    refund = await issue_refund({"account_id": acct_id, "amount": 4999})
+#+END_SRC
+
+- *Unhandled failure*
+  The reply gets sent even when the refund fails, because ~send_reply~ isn't conditional on ~issue_refund~ succeeding. The customer gets an email saying "your refund has been processed" when it hasn't.
+
+The same bugs show up everywhere LLMs compose tools. An incident response bot retries a deployment rollback on timeout, re-deploying the broken version. A meeting bot creates a Jira ticket, the call fails, but sends a Slack message referencing the ticket key anyway. Wrong fields, unhandled errors, unsafe retry, unbounded loops.
+
+* λ-Tool
+
+[[https://github.com/matchcase/lambda-tool][λ-Tool]] makes these four bugs compile-time type errors; the LLM generates λ-Tool code instead of Python, then a type checker verifies the code before any tool runs. If the code is wrong, the LLM gets a type error, fixes it, and resubmits. Nothing executed, so the retry is free.
+
+Here's the same support agent in λ-Tool:
+#+BEGIN_SRC ocaml
+tool lookup_account: String -{Read}-> {id: String, subscription_tier: String,
+                                       email: String, last_charge_cents: Int};
+tool issue_refund: {account_id: String, amount: Int} -{Write}-> {tx_id: String};
+tool send_reply: {to: String, body: String} -{Write}-> Unit;
+
+match exec tool lookup_account "cust_12345" {
+  Ok(account) =>
+    match exec tool issue_refund {account_id = account.id,
+                                   amount = account.last_charge_cents} {
+      Ok(refund) =>
+        match exec tool send_reply {to = account.email,
+                                     body = refund.tx_id} {
+          Ok(u) => "refund processed and customer notified",
+          Err(e) => "refund succeeded but notification failed"
+        },
+      Err(e) => "refund failed, customer not refunded"
+    },
+  Err(e) => "account lookup failed"
+}
+#+END_SRC
+
+Every tool declares its input type, output type, and effects (~Read~, ~Write~). The types are how the checker knows what fields exist. If the LLM writes ~account.plan~, it gets:
+#+BEGIN_EXAMPLE
+Field 'plan' not found in record type
+  {id: String, subscription_tier: String, email: String, last_charge_cents: Int}
+#+END_EXAMPLE
+
+Every ~exec~ returns a ~Result~. The only way to use it is ~match ... { Ok(x) => ..., Err(e) => ... }~. The type checker rejects any program that uses a Result without matching both branches. ~send_reply~ is nested inside ~Ok(refund)~, so it only runs if the refund succeeded. In the ~Err~ branch, ~refund~ doesn't exist as a variable, so the LLM can't reference data from a failed call.
+
+There is no retry mechanism. ~exec tool issue_refund ...~ evaluates exactly once, and the language has no ~try/except~, no ~while~, no recursion. You can't write a retry loop because the syntax doesn't /allow/ it.
+
+Iteration is bounded: ~map~, ~filter~, ~fold~ over finite lists; these require pure callbacks. Trying to call a tool inside ~map~ is a type error:
+#+BEGIN_SRC ocaml
+tool charge: {id: Int, amount: Int} -{Write}-> {tx_id: String};
+
+map (fn o: {id: Int, amount: Int} => exec tool charge o)
+    [{id = 1, amount = 100}]
+(* Effect violation: allowed {} but got {Write} *)
+#+END_SRC
+
+Effectful iteration uses ~traverse~, which short-circuits on the first error and forces Result handling:
+#+BEGIN_SRC ocaml
+match traverse (fn o: {id: Int, amount: Int} =>
+    exec tool charge o
+  ) [{id = 1, amount = 100}] {
+  Ok(receipts) => "done",
+  Err(e) => e
+}
+#+END_SRC
+
+Unlike Python-based Programmatic Tool Calling implementations, λ-Tool does not require a sandbox because the restrictiveness /is/ the sandbox.
+
+* Why Types
+
+The idea of restricting a language to prevent errors goes back to Alonzo Church, who [[https://plato.stanford.edu/entries/type-theory-church/][added types to his lambda calculus]] in 1940 specifically to forbid nonsense like applying a number to a number. The typed version could express fewer programs, and yet that was the point: the programs you lose are exactly the ones you don't want. Robin Milner took this further with ML, adding type inference and mandatory pattern matching, so the compiler could prove you'd handled every case before the code ran. The [[https://cs3110.github.io/textbook/chapters/adv/curry-howard.html][Curry-Howard correspondence]] formalized why this works: types are propositions, programs are proofs, and a type checker is a proof checker. When λ-Tool rejects a program that doesn't handle ~Err~, it's rejecting an incomplete proof.
+
+Each of λ-Tool's four guarantees comes from a specific result in this lineage. Row types, from Didier Rémy's work extending ML records in the early 90s, give us field safety: ~{id: String, email: String}~ means exactly those fields, and accessing anything else is a compile-time error. Mandatory Result matching is just ML's exhaustive pattern matching applied to tool calls, and bounded iteration (no ~while~, no recursion) gives guaranteed termination.
+
+The double-write problem, on the other hand, needed something newer. Jean-Yves Girard's [[https://ncatlab.org/nlab/show/linear+logic][linear logic]] introduced the idea that a fact can be used exactly once: when you use it, it's consumed. λ-Tool's ~!T~ annotation applies this to values:
+#+BEGIN_SRC ocaml
+fn token: !String => let a = token in let b = token in a
+(* Linearity violation for 'token': used 2 times (must be exactly once) *)
+#+END_SRC
+
+A refund token, an API nonce, a deployment rollback: these are resources that should be consumed exactly once. Linear types enforce that at compile time.
+
+Jane Street routes hundreds of billions of dollars through OCaml, a direct descendant of ML, because its type system catches at compile time what would be runtime crashes in Python. λ-Tool applies the same tradition to the problem of tool composition by language models.
+
+* Results
+
+I ran both Claude Sonnet and Haiku against 8 PTC tasks, generating both Python and λ-Tool. Both models generated valid λ-Tool on the first try over 94% of the time. The remaining ~4% were parse errors, caught instantly before any tool runs.
+
+In this experiment, every λ-Tool program that parsed also typed correctly, and every program that typed correctly executed without errors. The Python programs all ran without exceptions too, but that's the problem: several of them contained silent double-write bugs that the sandbox didn't catch. λ-Tool rejected the same patterns at compile time.
+
+The full experiment setup and results are in the [[https://github.com/matchcase/lambda-tool/raw/main/paper/main.pdf][paper]].
+
+* Implementation
+
+[[https://github.com/matchcase/lambda-tool][λ-Tool]] is ~2,500 lines of OCaml, containing a lexer, parser, bidirectional type checker, and interpreter. The type checker has 178 tests across three suites, plus 200,000 QCheck-generated random well-typed programs, with zero counterexamples of the type system's guarantees.
+
+The [[https://github.com/matchcase/lambda-tool-python][Python package]] wraps the OCaml CLI:
+#+BEGIN_SRC python
+from lambda_tool import LambdaTool
+
+lt = LambdaTool()
+
+# Type-check -- no execution, no side effects
+check = lt.typecheck(code)
+
+# Execute with real tool implementations
+result = lt.run(code, executors={
+    "lookup_account": real_account_api,
+    "issue_refund": real_refund_api,
+    "send_reply": real_email_api,
+})
+#+END_SRC
+
+[[https://github.com/matchcase/minilambda][minilambda]] is a basic (~200 LoC) demo agent that uses this Python package for tool calling. Claude generates λ-Tool code, the type checker verifies it, the interpreter executes it with real Python callbacks. It processes a batch of orders, which includes charging cards and sending receipts, with a simulated ~30% card decline rate. The type system forces Claude to handle the failures, because the code won't compile otherwise.
+
+* Links
+
+- [[https://github.com/matchcase/lambda-tool][λ-Tool]]: OCaml type checker and interpreter
+- [[https://github.com/matchcase/lambda-tool-python][lambda-tool-python]]: Python package
+- [[https://github.com/matchcase/minilambda][minilambda]]: minimal working agent
+- [[https://github.com/matchcase/lambda-tool/raw/main/paper/main.pdf][Paper]]: full type system and proofs
+- [[https://github.com/matchcase/lambda-tool/blob/main/skill.md][skill.md]]: the prompt that teaches Claude to generate λ-Tool code
+
+* About Me
+
+My name is [[https://coldboot.org][Sarthak]] and I like using cross-disciplinary techniques to solve interesting problems. The ivory tower has many spires, and I like building bridges that connect them. If you have something interesting that you would like me to work on, please feel free to [[mailto:shahsarthakw@gmail.com][reach out]].

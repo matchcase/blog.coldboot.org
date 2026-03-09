@@ -22,14 +22,14 @@
          (div (@ (style "flex: 1 1 auto; padding-left: 30px"))
               (h2 "Hello 👋")
               (p "My name is Sarthak, and I like computers, mathematics, pixel art and music.")
-              (p "I am currently conducting research in Cybersecurity and Deep Learning at the Department of Computer Science, University of Oxford.")
-              (p "I previously worked on "
+              (p "I am currently based in Tokyo, and I was previously conducting research in AI and Cybersecurity at the Department of Computer Science of the University of Oxford.")
+              (p "In addition to that, I worked on "
                  ,(anchor "Parameterized Packages" "https://summerofcode.withgoogle.com/programs/2023/projects/heQYLzrz")
                  " as a " 
                  ,(anchor "GSoC" "https://summerofcode.withgoogle.com") 
                  " intern at "
                  ,(anchor "GNU Guix" "https://guix.gnu.org")
-                 ". I have also worked as an assistant HPC admin, and a Security Engineering Intern at Mercari, Inc.")
+                 ", and I have also worked as an assistant HPC admin, and a Security Engineering Intern at Mercari, Inc.")
               (p "The sprite on the left is Hirasawa Yui from the manga series " (i"K-On!") ", made in a "(i "Yume Nikki") "-esque style.")))))
 
 (site #:title "(blog . (coldboot . org))"

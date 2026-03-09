@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>(blog . (coldboot . org))</title><id>https://blog.coldboot.org/feeds/tags/Type Theory.xml</id><subtitle>Tag: Type Theory</subtitle><updated>2026-03-10T06:46:02Z</updated><link href="https://blog.coldboot.org/feeds/tags/Type Theory.xml" rel="self" /><link href="https://blog.coldboot.org" /><entry><title>Fixing Programmatic Tool Calling With Types</title><id>https://blog.coldboot.org/fixing-programmatic-tool-calling-with-types.html</id><author><name>Sarthak Shah</name><email>shahsarthakw@gmail.com</email></author><updated>2026-03-10T13:37:00Z</updated><link href="https://blog.coldboot.org/fixing-programmatic-tool-calling-with-types.html" rel="alternate" /><content type="html">&lt;p&gt;
+Anthropic recently introduced &lt;a href=&quot;https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling&quot;&gt;Programmatic Tool Calling&lt;/a&gt;, which lets Large Language Models write Python programs to orchestrate multiple tool calls with loops, conditionals, and error handling. It is a very powerful method to have an agent run a huge number of tool calls without filling up its context window, and also avoid the latency of the usual call-one-tool-at-a-time loop.
+&lt;/p&gt;&lt;p&gt;
+This approach works great in demos, however it runs into a number of issues in production, and they all have the same root cause: Python is &lt;i&gt;too expressive&lt;/i&gt; for this job. I created a small, &lt;i&gt;restricted&lt;/i&gt; programming language called &lt;a href=&quot;https://github.com/matchcase/lambda-tool&quot;&gt;λ-Tool&lt;/a&gt; in OCaml to solve this problem, and it catches four common tool calling issues at &lt;b&gt;compile time&lt;/b&gt;, before a single tool call is made.
+&lt;/p&gt;&lt;div id=&quot;outline-container-orgcedef29&quot; class=&quot;outline-2&quot;&gt;
+&lt;h2 id=&quot;orgcedef29&quot;&gt;The Issues&lt;/h2&gt;
+&lt;div id=&quot;text-orgcedef29&quot; class=&quot;outline-text-2&quot;&gt;
+&lt;p&gt;
+Say you have a support agent. A customer writes in: &amp;quot;I was charged twice.&amp;quot; The LLM looks up the account, issues a refund, sends a reply. Here's the Python code it generates:
+&lt;/p&gt;
+&lt;div class=&quot;org-src-container&quot;&gt;
+&lt;pre class=&quot;src src-python&quot;&gt;&lt;code&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;account&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; = &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;await&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; lookup_account(&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;ticket.customer_id&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt;
+&lt;span style=&quot;color: #a0a0cf;&quot;&gt;refund&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; = &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;await&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; issue_refund(&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;{&lt;/span&gt;
+    &lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;account_id&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: account[&lt;/span&gt;&lt;span style=&quot;color: #f9f9dededede;&quot;&gt;&amp;quot;id&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;],
+    &lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;amount&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: account[&lt;/span&gt;&lt;span style=&quot;color: #f9f9dededede;&quot;&gt;&amp;quot;last_charge_cents&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;]&lt;/span&gt;
+&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt;
+&lt;span style=&quot;color: #a0a0cf;&quot;&gt;await&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; send_reply(&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;{&lt;/span&gt;
+    &lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;to&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: account[&lt;/span&gt;&lt;span style=&quot;color: #f9f9dededede;&quot;&gt;&amp;quot;email&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;],
+    &lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;body&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: f&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;Refund of $&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;{&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;refund[&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;'amount'&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;] / &lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;100&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;:.2f&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt; processed. &amp;quot;&lt;/span&gt;
+            &lt;span style=&quot;color: #b5ccad;&quot;&gt;f&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;Transaction: &lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;{&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;refund[&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;'tx_id'&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;]&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;&lt;/span&gt;
+&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+This passes the sandbox. Every test succeeds. And yet, it has &lt;i&gt;at least&lt;/i&gt; three bugs:
+&lt;/p&gt;
+
+&lt;ul class=&quot;org-ul&quot;&gt;
+&lt;li&gt;&lt;b&gt;Wrong field&lt;/b&gt;
+The account record has &lt;code&gt;subscription_tier&lt;/code&gt;. The LLM writes &lt;code&gt;account[&amp;quot;plan&amp;quot;]&lt;/code&gt; somewhere in the conditional logic. The mock returns a dict with everything the test expects, so the &lt;code&gt;KeyError&lt;/code&gt; never fires. In production it crashes, but only after side effects have already happened.&lt;/li&gt;
+
+&lt;li&gt;&lt;b&gt;Double write&lt;/b&gt;
+&lt;code&gt;issue_refund&lt;/code&gt; succeeds but the response times out. The LLM's error handling retries the call. The refund went through on the first attempt. Now the customer has been refunded twice.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class=&quot;org-src-container&quot;&gt;
+&lt;pre class=&quot;src src-python&quot;&gt;&lt;code&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;try&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;:
+    &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;refund&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; = &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;await&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; issue_refund(&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;{&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;account_id&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: acct_id, &lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;amount&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: &lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;4999&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt;
+&lt;span style=&quot;color: #a0a0cf;&quot;&gt;except&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;TimeoutError&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;:
+    &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;refund&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; = &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;await&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; issue_refund(&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;{&lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;account_id&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: acct_id, &lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;amount&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: &lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;4999&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;ul class=&quot;org-ul&quot;&gt;
+&lt;li&gt;&lt;b&gt;Unhandled failure&lt;/b&gt;
+The reply gets sent even when the refund fails, because &lt;code&gt;send_reply&lt;/code&gt; isn't conditional on &lt;code&gt;issue_refund&lt;/code&gt; succeeding. The customer gets an email saying &amp;quot;your refund has been processed&amp;quot; when it hasn't.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;
+The same bugs show up everywhere LLMs compose tools. An incident response bot retries a deployment rollback on timeout, re-deploying the broken version. A meeting bot creates a Jira ticket, the call fails, but sends a Slack message referencing the ticket key anyway. Wrong fields, unhandled errors, unsafe retry, unbounded loops.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;div id=&quot;outline-container-orgb87e0b4&quot; class=&quot;outline-2&quot;&gt;
+&lt;h2 id=&quot;orgb87e0b4&quot;&gt;λ-Tool&lt;/h2&gt;
+&lt;div id=&quot;text-orgb87e0b4&quot; class=&quot;outline-text-2&quot;&gt;
+&lt;p&gt;
+&lt;a href=&quot;https://github.com/matchcase/lambda-tool&quot;&gt;λ-Tool&lt;/a&gt; makes these four bugs compile-time type errors; the LLM generates λ-Tool code instead of Python, then a type checker verifies the code before any tool runs. If the code is wrong, the LLM gets a type error, fixes it, and resubmits. Nothing executed, so the retry is free.
+&lt;/p&gt;
+
+&lt;p&gt;
+Here's the same support agent in λ-Tool:
+&lt;/p&gt;
+&lt;div class=&quot;org-src-container&quot;&gt;
+&lt;pre class=&quot;src src-ocaml&quot;&gt;&lt;code&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;tool lookup_account: &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;String&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; -{&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Read&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;}-&amp;gt; {&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;id: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;String&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;, subscription_tier: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;String&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;,
+                                       email: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;String&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;, last_charge_cents: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Int&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;};
+tool issue_refund: {&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;account_id: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;String&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;, amount: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Int&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;}&lt;/span&gt; &lt;span style=&quot;color: #a0a0cf;&quot;&gt;-{&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Write&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;}-&amp;gt; {&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;tx_id: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;String&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;};
+tool send_reply: {&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;to&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;String&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;, body: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;String&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;}&lt;/span&gt; &lt;span style=&quot;color: #a0a0cf;&quot;&gt;-{&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Write&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;}-&amp;gt; &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;Unit&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;;
+
+&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;match&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; exec tool lookup_account &lt;/span&gt;&lt;span style=&quot;color: #f3a0a0;&quot;&gt;&amp;quot;cust_12345&amp;quot;&lt;/span&gt; &lt;span style=&quot;color: #a0a0cf;&quot;&gt;{&lt;/span&gt;
+  &lt;span style=&quot;color: #e4b8c6;&quot;&gt;Ok&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;account&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;)&lt;/span&gt; &lt;span style=&quot;color: #e4b8c6;&quot;&gt;=&amp;gt;
+    &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;match&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt; exec tool issue_refund {&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;account_id = account.id,
+                                   amount = account.last_charge_cents&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt; &lt;span style=&quot;color: #e4b8c6;&quot;&gt;{&lt;/span&gt;
+      &lt;span style=&quot;color: #b5ccad;&quot;&gt;Ok&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #f3bdbd;&quot;&gt;refund&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;)&lt;/span&gt; &lt;span style=&quot;color: #b5ccad;&quot;&gt;=&amp;gt;
+        &lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;match&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt; exec tool send_reply {&lt;/span&gt;&lt;span style=&quot;color: #f3bdbd;&quot;&gt;to&lt;/span&gt;&lt;span style=&quot;color: #f3bdbd;&quot;&gt; = account.email,
+                                     body = refund.tx_id&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;}&lt;/span&gt; &lt;span style=&quot;color: #b5ccad;&quot;&gt;{&lt;/span&gt;
+          &lt;span style=&quot;color: #f3bdbd;&quot;&gt;Ok&lt;/span&gt;&lt;span style=&quot;color: #f3bdbd;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #d1c0bb;&quot;&gt;u&lt;/span&gt;&lt;span style=&quot;color: #f3bdbd;&quot;&gt;)&lt;/span&gt; &lt;span style=&quot;color: #f3bdbd;&quot;&gt;=&amp;gt; &lt;/span&gt;&lt;span style=&quot;color: #f9f9dededede;&quot;&gt;&amp;quot;refund processed and customer notified&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #f3bdbd;&quot;&gt;,
+          &lt;/span&gt;&lt;span style=&quot;color: #f3bdbd;&quot;&gt;Err&lt;/span&gt;&lt;span style=&quot;color: #f3bdbd;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #d1c0bb;&quot;&gt;e&lt;/span&gt;&lt;span style=&quot;color: #f3bdbd;&quot;&gt;)&lt;/span&gt; &lt;span style=&quot;color: #f3bdbd;&quot;&gt;=&amp;gt; &lt;/span&gt;&lt;span style=&quot;color: #f9f9dededede;&quot;&gt;&amp;quot;refund succeeded but notification failed&amp;quot;&lt;/span&gt;
+        &lt;span style=&quot;color: #b5ccad;&quot;&gt;},
+      &lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;Err&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #f3bdbd;&quot;&gt;e&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;)&lt;/span&gt; &lt;span style=&quot;color: #b5ccad;&quot;&gt;=&amp;gt; &lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;refund failed, customer not refunded&amp;quot;&lt;/span&gt;
+    &lt;span style=&quot;color: #e4b8c6;&quot;&gt;},
+  &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Err&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;e&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;)&lt;/span&gt; &lt;span style=&quot;color: #e4b8c6;&quot;&gt;=&amp;gt; &lt;/span&gt;&lt;span style=&quot;color: #f271dc5be362;&quot;&gt;&amp;quot;account lookup failed&amp;quot;&lt;/span&gt;
+&lt;span style=&quot;color: #a0a0cf;&quot;&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Every tool declares its input type, output type, and effects (&lt;code&gt;Read&lt;/code&gt;, &lt;code&gt;Write&lt;/code&gt;). The types are how the checker knows what fields exist. If the LLM writes &lt;code&gt;account.plan&lt;/code&gt;, it gets:
+&lt;/p&gt;
+&lt;pre id=&quot;org1219d03&quot; class=&quot;example&quot;&gt;
+Field 'plan' not found in record type
+  {id: String, subscription_tier: String, email: String, last_charge_cents: Int}
+&lt;/pre&gt;
+
+&lt;p&gt;
+Every &lt;code&gt;exec&lt;/code&gt; returns a &lt;code&gt;Result&lt;/code&gt;. The only way to use it is &lt;code&gt;match ... { Ok(x) =&amp;gt; ..., Err(e) =&amp;gt; ... }&lt;/code&gt;. The type checker rejects any program that uses a Result without matching both branches. &lt;code&gt;send_reply&lt;/code&gt; is nested inside &lt;code&gt;Ok(refund)&lt;/code&gt;, so it only runs if the refund succeeded. In the &lt;code&gt;Err&lt;/code&gt; branch, &lt;code&gt;refund&lt;/code&gt; doesn't exist as a variable, so the LLM can't reference data from a failed call.
+&lt;/p&gt;
+
+&lt;p&gt;
+There is no retry mechanism. &lt;code&gt;exec tool issue_refund ...&lt;/code&gt; evaluates exactly once, and the language has no &lt;code&gt;try/except&lt;/code&gt;, no &lt;code&gt;while&lt;/code&gt;, no recursion. You can't write a retry loop because the syntax doesn't &lt;i&gt;allow&lt;/i&gt; it.
+&lt;/p&gt;
+
+&lt;p&gt;
+Iteration is bounded: &lt;code&gt;map&lt;/code&gt;, &lt;code&gt;filter&lt;/code&gt;, &lt;code&gt;fold&lt;/code&gt; over finite lists; these require pure callbacks. Trying to call a tool inside &lt;code&gt;map&lt;/code&gt; is a type error:
+&lt;/p&gt;
+&lt;div class=&quot;org-src-container&quot;&gt;
+&lt;pre class=&quot;src src-ocaml&quot;&gt;&lt;code&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;tool charge: {&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;id: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Int&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;, amount: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Int&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;}&lt;/span&gt; &lt;span style=&quot;color: #a0a0cf;&quot;&gt;-{&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Write&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;}-&amp;gt; {&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;tx_id: &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;String&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;};
+
+map (&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;fn o: {&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;id: &lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;Int&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;, amount: &lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;Int&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #a9c99f;&quot;&gt; &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;=&amp;gt; exec tool charge o&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt;
+    &lt;span style=&quot;color: #a0a0cf;&quot;&gt;[&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;{&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;id = 1, amount = 100&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;]&lt;/span&gt;
+&lt;span style=&quot;color: #a0a0cf;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;* &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Effect violation: allowed {}&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;but got {&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;Write&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;*&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Effectful iteration uses &lt;code&gt;traverse&lt;/code&gt;, which short-circuits on the first error and forces Result handling:
+&lt;/p&gt;
+&lt;div class=&quot;org-src-container&quot;&gt;
+&lt;pre class=&quot;src src-ocaml&quot;&gt;&lt;code&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;match&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; traverse (&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;fn o: {&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;id: &lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;Int&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;, amount: &lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;Int&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #a9c99f;&quot;&gt; &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;=&amp;gt;
+    exec tool charge o
+  &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt; &lt;span style=&quot;color: #a0a0cf;&quot;&gt;[&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;{&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;id = 1, amount = 100&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;]&lt;/span&gt; &lt;span style=&quot;color: #a0a0cf;&quot;&gt;{&lt;/span&gt;
+  &lt;span style=&quot;color: #e4b8c6;&quot;&gt;Ok&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;receipts&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;)&lt;/span&gt; &lt;span style=&quot;color: #e4b8c6;&quot;&gt;=&amp;gt; &lt;/span&gt;&lt;span style=&quot;color: #f271dc5be362;&quot;&gt;&amp;quot;done&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;,
+  &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Err&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;e&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;)&lt;/span&gt; &lt;span style=&quot;color: #e4b8c6;&quot;&gt;=&amp;gt; e
+&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+Unlike Python-based Programmatic Tool Calling implementations, λ-Tool does not require a sandbox because the restrictiveness &lt;i&gt;is&lt;/i&gt; the sandbox.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;div id=&quot;outline-container-org29dbcb9&quot; class=&quot;outline-2&quot;&gt;
+&lt;h2 id=&quot;org29dbcb9&quot;&gt;Why Types&lt;/h2&gt;
+&lt;div id=&quot;text-org29dbcb9&quot; class=&quot;outline-text-2&quot;&gt;
+&lt;p&gt;
+The idea of restricting a language to prevent errors goes back to Alonzo Church, who &lt;a href=&quot;https://plato.stanford.edu/entries/type-theory-church/&quot;&gt;added types to his lambda calculus&lt;/a&gt; in 1940 specifically to forbid nonsense like applying a number to a number. The typed version could express fewer programs, and yet that was the point: the programs you lose are exactly the ones you don't want. Robin Milner took this further with ML, adding type inference and mandatory pattern matching, so the compiler could prove you'd handled every case before the code ran. The &lt;a href=&quot;https://cs3110.github.io/textbook/chapters/adv/curry-howard.html&quot;&gt;Curry-Howard correspondence&lt;/a&gt; formalized why this works: types are propositions, programs are proofs, and a type checker is a proof checker. When λ-Tool rejects a program that doesn't handle &lt;code&gt;Err&lt;/code&gt;, it's rejecting an incomplete proof.
+&lt;/p&gt;
+
+&lt;p&gt;
+Each of λ-Tool's four guarantees comes from a specific result in this lineage. Row types, from Didier Rémy's work extending ML records in the early 90s, give us field safety: &lt;code&gt;{id: String, email: String}&lt;/code&gt; means exactly those fields, and accessing anything else is a compile-time error. Mandatory Result matching is just ML's exhaustive pattern matching applied to tool calls, and bounded iteration (no &lt;code&gt;while&lt;/code&gt;, no recursion) gives guaranteed termination.
+&lt;/p&gt;
+
+&lt;p&gt;
+The double-write problem, on the other hand, needed something newer. Jean-Yves Girard's &lt;a href=&quot;https://ncatlab.org/nlab/show/linear+logic&quot;&gt;linear logic&lt;/a&gt; introduced the idea that a fact can be used exactly once: when you use it, it's consumed. λ-Tool's &lt;code&gt;!T&lt;/code&gt; annotation applies this to values:
+&lt;/p&gt;
+&lt;div class=&quot;org-src-container&quot;&gt;
+&lt;pre class=&quot;src src-ocaml&quot;&gt;&lt;code&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;fn token: &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;!&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;String&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; =&amp;gt; &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;let&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;a&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; = token &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;in&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;let&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;b&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; = token &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;in&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; a
+&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;* &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;Linearity violation for 'token': used 2 times (&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;must be exactly once&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;)&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; &lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;*&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+A refund token, an API nonce, a deployment rollback: these are resources that should be consumed exactly once. Linear types enforce that at compile time.
+&lt;/p&gt;
+
+&lt;p&gt;
+Jane Street routes hundreds of billions of dollars through OCaml, a direct descendant of ML, because its type system catches at compile time what would be runtime crashes in Python. λ-Tool applies the same tradition to the problem of tool composition by language models.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;div id=&quot;outline-container-org81e237d&quot; class=&quot;outline-2&quot;&gt;
+&lt;h2 id=&quot;org81e237d&quot;&gt;Results&lt;/h2&gt;
+&lt;div id=&quot;text-org81e237d&quot; class=&quot;outline-text-2&quot;&gt;
+&lt;p&gt;
+I ran both Claude Sonnet and Haiku against 8 PTC tasks, generating both Python and λ-Tool. Both models generated valid λ-Tool on the first try over 94% of the time. The remaining ~4% were parse errors, caught instantly before any tool runs.
+&lt;/p&gt;
+
+&lt;p&gt;
+In this experiment, every λ-Tool program that parsed also typed correctly, and every program that typed correctly executed without errors. The Python programs all ran without exceptions too, but that's the problem: several of them contained silent double-write bugs that the sandbox didn't catch. λ-Tool rejected the same patterns at compile time.
+&lt;/p&gt;
+
+&lt;p&gt;
+The full experiment setup and results are in the &lt;a href=&quot;https://github.com/matchcase/lambda-tool/raw/main/paper/main.pdf&quot;&gt;paper&lt;/a&gt;.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;div id=&quot;outline-container-org8324efb&quot; class=&quot;outline-2&quot;&gt;
+&lt;h2 id=&quot;org8324efb&quot;&gt;Implementation&lt;/h2&gt;
+&lt;div id=&quot;text-org8324efb&quot; class=&quot;outline-text-2&quot;&gt;
+&lt;p&gt;
+&lt;a href=&quot;https://github.com/matchcase/lambda-tool&quot;&gt;λ-Tool&lt;/a&gt; is ~2,500 lines of OCaml, containing a lexer, parser, bidirectional type checker, and interpreter. The type checker has 178 tests across three suites, plus 200,000 QCheck-generated random well-typed programs, with zero counterexamples of the type system's guarantees.
+&lt;/p&gt;
+
+&lt;p&gt;
+The &lt;a href=&quot;https://github.com/matchcase/lambda-tool-python&quot;&gt;Python package&lt;/a&gt; wraps the OCaml CLI:
+&lt;/p&gt;
+&lt;div class=&quot;org-src-container&quot;&gt;
+&lt;pre class=&quot;src src-python&quot;&gt;&lt;code&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;from&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; lambda_tool &lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;import&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; LambdaTool
+
+&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;lt&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; = LambdaTool()&lt;/span&gt;
+
+&lt;span style=&quot;color: #a0a0cf;&quot;&gt;# Type-check -- no execution, no side effects&lt;/span&gt;
+&lt;span style=&quot;color: #a0a0cf;&quot;&gt;check&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; = lt.typecheck(&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;code&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt;
+
+&lt;span style=&quot;color: #a0a0cf;&quot;&gt;# Execute with real tool implementations&lt;/span&gt;
+&lt;span style=&quot;color: #a0a0cf;&quot;&gt;result&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt; = lt.run(&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;code, executors={&lt;/span&gt;
+    &lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;lookup_account&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: real_account_api,
+    &lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;issue_refund&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: real_refund_api,
+    &lt;/span&gt;&lt;span style=&quot;color: #dadae665d6d6;&quot;&gt;&amp;quot;send_reply&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #b5ccad;&quot;&gt;: real_email_api,
+&lt;/span&gt;&lt;span style=&quot;color: #e4b8c6;&quot;&gt;}&lt;/span&gt;&lt;span style=&quot;color: #a0a0cf;&quot;&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;
+&lt;a href=&quot;https://github.com/matchcase/minilambda&quot;&gt;minilambda&lt;/a&gt; is a basic (~200 LoC) demo agent that uses this Python package for tool calling. Claude generates λ-Tool code, the type checker verifies it, the interpreter executes it with real Python callbacks. It processes a batch of orders, which includes charging cards and sending receipts, with a simulated ~30% card decline rate. The type system forces Claude to handle the failures, because the code won't compile otherwise.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;div id=&quot;outline-container-orgc5ca6fe&quot; class=&quot;outline-2&quot;&gt;
+&lt;h2 id=&quot;orgc5ca6fe&quot;&gt;Links&lt;/h2&gt;
+&lt;div id=&quot;text-orgc5ca6fe&quot; class=&quot;outline-text-2&quot;&gt;
+&lt;ul class=&quot;org-ul&quot;&gt;
+&lt;li&gt;&lt;a href=&quot;https://github.com/matchcase/lambda-tool&quot;&gt;λ-Tool&lt;/a&gt;: OCaml type checker and interpreter&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://github.com/matchcase/lambda-tool-python&quot;&gt;lambda-tool-python&lt;/a&gt;: Python package&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://github.com/matchcase/minilambda&quot;&gt;minilambda&lt;/a&gt;: minimal working agent&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://github.com/matchcase/lambda-tool/raw/main/paper/main.pdf&quot;&gt;Paper&lt;/a&gt;: full type system and proofs&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://github.com/matchcase/lambda-tool/blob/main/skill.md&quot;&gt;skill.md&lt;/a&gt;: the prompt that teaches Claude to generate λ-Tool code&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;div id=&quot;outline-container-org2f1e3d2&quot; class=&quot;outline-2&quot;&gt;
+&lt;h2 id=&quot;org2f1e3d2&quot;&gt;About Me&lt;/h2&gt;
+&lt;div id=&quot;text-org2f1e3d2&quot; class=&quot;outline-text-2&quot;&gt;
+&lt;p&gt;
+My name is &lt;a href=&quot;https://coldboot.org&quot;&gt;Sarthak&lt;/a&gt; and I like using cross-disciplinary techniques to solve interesting problems. The ivory tower has many spires, and I like building bridges that connect them. If you have something interesting that you would like me to work on, please feel free to &lt;a href=&quot;mailto:shahsarthakw@gmail.com&quot;&gt;reach out&lt;/a&gt;.
+&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;</content></entry></feed>

@@ -1,0 +1,236 @@
+title: Fixing Programmatic Tool Calling With Types
+date: 2026-03-10 13:37
+tags: OCaml, Type Theory, Large Language Models, Programming Languages
+---
+<p>
+Anthropic recently introduced <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling">Programmatic Tool Calling</a>, which lets Large Language Models write Python programs to orchestrate multiple tool calls with loops, conditionals, and error handling. It is a very powerful method to have an agent run a huge number of tool calls without filling up its context window, and also avoid the latency of the usual call-one-tool-at-a-time loop.
+</p>
+
+<p>
+This approach works great in demos, however it runs into a number of issues in production, and they all have the same root cause: Python is <i>too expressive</i> for this job. I created a small, <i>restricted</i> programming language called <a href="https://github.com/matchcase/lambda-tool">λ-Tool</a> in OCaml to solve this problem, and it catches four common tool calling issues at <b>compile time</b>, before a single tool call is made.
+</p>
+<div id="outline-container-orgcedef29" class="outline-2">
+<h2 id="orgcedef29">The Issues</h2>
+<div class="outline-text-2" id="text-orgcedef29">
+<p>
+Say you have a support agent. A customer writes in: "I was charged twice." The LLM looks up the account, issues a refund, sends a reply. Here's the Python code it generates:
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><code><span style="color: #a0a0cf;">account</span><span style="color: #a0a0cf;"> = </span><span style="color: #a0a0cf;">await</span><span style="color: #a0a0cf;"> lookup_account(</span><span style="color: #e4b8c6;">ticket.customer_id</span><span style="color: #a0a0cf;">)</span>
+<span style="color: #a0a0cf;">refund</span><span style="color: #a0a0cf;"> = </span><span style="color: #a0a0cf;">await</span><span style="color: #a0a0cf;"> issue_refund(</span><span style="color: #e4b8c6;">{</span>
+    <span style="color: #dadae665d6d6;">"account_id"</span><span style="color: #b5ccad;">: account[</span><span style="color: #f9f9dededede;">"id"</span><span style="color: #b5ccad;">],
+    </span><span style="color: #dadae665d6d6;">"amount"</span><span style="color: #b5ccad;">: account[</span><span style="color: #f9f9dededede;">"last_charge_cents"</span><span style="color: #b5ccad;">]</span>
+<span style="color: #e4b8c6;">}</span><span style="color: #a0a0cf;">)</span>
+<span style="color: #a0a0cf;">await</span><span style="color: #a0a0cf;"> send_reply(</span><span style="color: #e4b8c6;">{</span>
+    <span style="color: #dadae665d6d6;">"to"</span><span style="color: #b5ccad;">: account[</span><span style="color: #f9f9dededede;">"email"</span><span style="color: #b5ccad;">],
+    </span><span style="color: #dadae665d6d6;">"body"</span><span style="color: #b5ccad;">: f</span><span style="color: #dadae665d6d6;">"Refund of $</span><span style="color: #dadae665d6d6;">{</span><span style="color: #dadae665d6d6;">refund[</span><span style="color: #dadae665d6d6;">'amount'</span><span style="color: #dadae665d6d6;">] / </span><span style="color: #dadae665d6d6;">100</span><span style="color: #dadae665d6d6;">:.2f</span><span style="color: #dadae665d6d6;">}</span><span style="color: #dadae665d6d6;"> processed. "</span>
+            <span style="color: #b5ccad;">f</span><span style="color: #dadae665d6d6;">"Transaction: </span><span style="color: #dadae665d6d6;">{</span><span style="color: #dadae665d6d6;">refund[</span><span style="color: #dadae665d6d6;">'tx_id'</span><span style="color: #dadae665d6d6;">]</span><span style="color: #dadae665d6d6;">}</span><span style="color: #dadae665d6d6;">"</span>
+<span style="color: #e4b8c6;">}</span><span style="color: #a0a0cf;">)</span>
+</code></pre>
+</div>
+
+<p>
+This passes the sandbox. Every test succeeds. And yet, it has <i>at least</i> three bugs:
+</p>
+
+<ul class="org-ul">
+<li><b>Wrong field</b>
+The account record has <code>subscription_tier</code>. The LLM writes <code>account["plan"]</code> somewhere in the conditional logic. The mock returns a dict with everything the test expects, so the <code>KeyError</code> never fires. In production it crashes, but only after side effects have already happened.</li>
+
+<li><b>Double write</b>
+<code>issue_refund</code> succeeds but the response times out. The LLM's error handling retries the call. The refund went through on the first attempt. Now the customer has been refunded twice.</li>
+</ul>
+<div class="org-src-container">
+<pre class="src src-python"><code><span style="color: #a0a0cf;">try</span><span style="color: #a0a0cf;">:
+    </span><span style="color: #a0a0cf;">refund</span><span style="color: #a0a0cf;"> = </span><span style="color: #a0a0cf;">await</span><span style="color: #a0a0cf;"> issue_refund(</span><span style="color: #e4b8c6;">{</span><span style="color: #dadae665d6d6;">"account_id"</span><span style="color: #b5ccad;">: acct_id, </span><span style="color: #dadae665d6d6;">"amount"</span><span style="color: #b5ccad;">: </span><span style="color: #b5ccad;">4999</span><span style="color: #e4b8c6;">}</span><span style="color: #a0a0cf;">)</span>
+<span style="color: #a0a0cf;">except</span><span style="color: #a0a0cf;"> </span><span style="color: #a0a0cf;">TimeoutError</span><span style="color: #a0a0cf;">:
+    </span><span style="color: #a0a0cf;">refund</span><span style="color: #a0a0cf;"> = </span><span style="color: #a0a0cf;">await</span><span style="color: #a0a0cf;"> issue_refund(</span><span style="color: #e4b8c6;">{</span><span style="color: #dadae665d6d6;">"account_id"</span><span style="color: #b5ccad;">: acct_id, </span><span style="color: #dadae665d6d6;">"amount"</span><span style="color: #b5ccad;">: </span><span style="color: #b5ccad;">4999</span><span style="color: #e4b8c6;">}</span><span style="color: #a0a0cf;">)</span>
+</code></pre>
+</div>
+
+<ul class="org-ul">
+<li><b>Unhandled failure</b>
+The reply gets sent even when the refund fails, because <code>send_reply</code> isn't conditional on <code>issue_refund</code> succeeding. The customer gets an email saying "your refund has been processed" when it hasn't.</li>
+</ul>
+
+<p>
+The same bugs show up everywhere LLMs compose tools. An incident response bot retries a deployment rollback on timeout, re-deploying the broken version. A meeting bot creates a Jira ticket, the call fails, but sends a Slack message referencing the ticket key anyway. Wrong fields, unhandled errors, unsafe retry, unbounded loops.
+</p>
+</div>
+</div>
+<div id="outline-container-orgb87e0b4" class="outline-2">
+<h2 id="orgb87e0b4">λ-Tool</h2>
+<div class="outline-text-2" id="text-orgb87e0b4">
+<p>
+<a href="https://github.com/matchcase/lambda-tool">λ-Tool</a> makes these four bugs compile-time type errors; the LLM generates λ-Tool code instead of Python, then a type checker verifies the code before any tool runs. If the code is wrong, the LLM gets a type error, fixes it, and resubmits. Nothing executed, so the retry is free.
+</p>
+
+<p>
+Here's the same support agent in λ-Tool:
+</p>
+<div class="org-src-container">
+<pre class="src src-ocaml"><code><span style="color: #a0a0cf;">tool lookup_account: </span><span style="color: #a0a0cf;">String</span><span style="color: #a0a0cf;"> -{</span><span style="color: #e4b8c6;">Read</span><span style="color: #a0a0cf;">}-&gt; {</span><span style="color: #e4b8c6;">id: </span><span style="color: #e4b8c6;">String</span><span style="color: #e4b8c6;">, subscription_tier: </span><span style="color: #e4b8c6;">String</span><span style="color: #e4b8c6;">,
+                                       email: </span><span style="color: #e4b8c6;">String</span><span style="color: #e4b8c6;">, last_charge_cents: </span><span style="color: #e4b8c6;">Int</span><span style="color: #a0a0cf;">};
+tool issue_refund: {</span><span style="color: #e4b8c6;">account_id: </span><span style="color: #e4b8c6;">String</span><span style="color: #e4b8c6;">, amount: </span><span style="color: #e4b8c6;">Int</span><span style="color: #a0a0cf;">}</span> <span style="color: #a0a0cf;">-{</span><span style="color: #e4b8c6;">Write</span><span style="color: #a0a0cf;">}-&gt; {</span><span style="color: #e4b8c6;">tx_id: </span><span style="color: #e4b8c6;">String</span><span style="color: #a0a0cf;">};
+tool send_reply: {</span><span style="color: #e4b8c6;">to</span><span style="color: #e4b8c6;">: </span><span style="color: #e4b8c6;">String</span><span style="color: #e4b8c6;">, body: </span><span style="color: #e4b8c6;">String</span><span style="color: #a0a0cf;">}</span> <span style="color: #a0a0cf;">-{</span><span style="color: #e4b8c6;">Write</span><span style="color: #a0a0cf;">}-&gt; </span><span style="color: #a0a0cf;">Unit</span><span style="color: #a0a0cf;">;
+
+</span><span style="color: #a0a0cf;">match</span><span style="color: #a0a0cf;"> exec tool lookup_account </span><span style="color: #f3a0a0;">"cust_12345"</span> <span style="color: #a0a0cf;">{</span>
+  <span style="color: #e4b8c6;">Ok</span><span style="color: #e4b8c6;">(</span><span style="color: #b5ccad;">account</span><span style="color: #e4b8c6;">)</span> <span style="color: #e4b8c6;">=&gt;
+    </span><span style="color: #e4b8c6;">match</span><span style="color: #e4b8c6;"> exec tool issue_refund {</span><span style="color: #b5ccad;">account_id = account.id,
+                                   amount = account.last_charge_cents</span><span style="color: #e4b8c6;">}</span> <span style="color: #e4b8c6;">{</span>
+      <span style="color: #b5ccad;">Ok</span><span style="color: #b5ccad;">(</span><span style="color: #f3bdbd;">refund</span><span style="color: #b5ccad;">)</span> <span style="color: #b5ccad;">=&gt;
+        </span><span style="color: #b5ccad;">match</span><span style="color: #b5ccad;"> exec tool send_reply {</span><span style="color: #f3bdbd;">to</span><span style="color: #f3bdbd;"> = account.email,
+                                     body = refund.tx_id</span><span style="color: #b5ccad;">}</span> <span style="color: #b5ccad;">{</span>
+          <span style="color: #f3bdbd;">Ok</span><span style="color: #f3bdbd;">(</span><span style="color: #d1c0bb;">u</span><span style="color: #f3bdbd;">)</span> <span style="color: #f3bdbd;">=&gt; </span><span style="color: #f9f9dededede;">"refund processed and customer notified"</span><span style="color: #f3bdbd;">,
+          </span><span style="color: #f3bdbd;">Err</span><span style="color: #f3bdbd;">(</span><span style="color: #d1c0bb;">e</span><span style="color: #f3bdbd;">)</span> <span style="color: #f3bdbd;">=&gt; </span><span style="color: #f9f9dededede;">"refund succeeded but notification failed"</span>
+        <span style="color: #b5ccad;">},
+      </span><span style="color: #b5ccad;">Err</span><span style="color: #b5ccad;">(</span><span style="color: #f3bdbd;">e</span><span style="color: #b5ccad;">)</span> <span style="color: #b5ccad;">=&gt; </span><span style="color: #dadae665d6d6;">"refund failed, customer not refunded"</span>
+    <span style="color: #e4b8c6;">},
+  </span><span style="color: #e4b8c6;">Err</span><span style="color: #e4b8c6;">(</span><span style="color: #b5ccad;">e</span><span style="color: #e4b8c6;">)</span> <span style="color: #e4b8c6;">=&gt; </span><span style="color: #f271dc5be362;">"account lookup failed"</span>
+<span style="color: #a0a0cf;">}</span>
+</code></pre>
+</div>
+
+<p>
+Every tool declares its input type, output type, and effects (<code>Read</code>, <code>Write</code>). The types are how the checker knows what fields exist. If the LLM writes <code>account.plan</code>, it gets:
+</p>
+<pre class="example" id="org1219d03">
+Field 'plan' not found in record type
+  {id: String, subscription_tier: String, email: String, last_charge_cents: Int}
+</pre>
+
+<p>
+Every <code>exec</code> returns a <code>Result</code>. The only way to use it is <code>match ... { Ok(x) =&gt; ..., Err(e) =&gt; ... }</code>. The type checker rejects any program that uses a Result without matching both branches. <code>send_reply</code> is nested inside <code>Ok(refund)</code>, so it only runs if the refund succeeded. In the <code>Err</code> branch, <code>refund</code> doesn't exist as a variable, so the LLM can't reference data from a failed call.
+</p>
+
+<p>
+There is no retry mechanism. <code>exec tool issue_refund ...</code> evaluates exactly once, and the language has no <code>try/except</code>, no <code>while</code>, no recursion. You can't write a retry loop because the syntax doesn't <i>allow</i> it.
+</p>
+
+<p>
+Iteration is bounded: <code>map</code>, <code>filter</code>, <code>fold</code> over finite lists; these require pure callbacks. Trying to call a tool inside <code>map</code> is a type error:
+</p>
+<div class="org-src-container">
+<pre class="src src-ocaml"><code><span style="color: #a0a0cf;">tool charge: {</span><span style="color: #e4b8c6;">id: </span><span style="color: #e4b8c6;">Int</span><span style="color: #e4b8c6;">, amount: </span><span style="color: #e4b8c6;">Int</span><span style="color: #a0a0cf;">}</span> <span style="color: #a0a0cf;">-{</span><span style="color: #e4b8c6;">Write</span><span style="color: #a0a0cf;">}-&gt; {</span><span style="color: #e4b8c6;">tx_id: </span><span style="color: #e4b8c6;">String</span><span style="color: #a0a0cf;">};
+
+map (</span><span style="color: #e4b8c6;">fn o: {</span><span style="color: #b5ccad;">id: </span><span style="color: #b5ccad;">Int</span><span style="color: #b5ccad;">, amount: </span><span style="color: #b5ccad;">Int</span><span style="color: #e4b8c6;">}</span><span style="color: #a9c99f;"> </span><span style="color: #e4b8c6;">=&gt; exec tool charge o</span><span style="color: #a0a0cf;">)</span>
+    <span style="color: #a0a0cf;">[</span><span style="color: #e4b8c6;">{</span><span style="color: #b5ccad;">id = 1, amount = 100</span><span style="color: #e4b8c6;">}</span><span style="color: #a0a0cf;">]</span>
+<span style="color: #a0a0cf;">(</span><span style="color: #e4b8c6;">* </span><span style="color: #e4b8c6;">Effect violation: allowed {}</span><span style="color: #a0a0cf;"> </span><span style="color: #e4b8c6;">but got {</span><span style="color: #b5ccad;">Write</span><span style="color: #e4b8c6;">}</span><span style="color: #a0a0cf;"> </span><span style="color: #e4b8c6;">*</span><span style="color: #a0a0cf;">)</span>
+</code></pre>
+</div>
+
+<p>
+Effectful iteration uses <code>traverse</code>, which short-circuits on the first error and forces Result handling:
+</p>
+<div class="org-src-container">
+<pre class="src src-ocaml"><code><span style="color: #a0a0cf;">match</span><span style="color: #a0a0cf;"> traverse (</span><span style="color: #e4b8c6;">fn o: {</span><span style="color: #b5ccad;">id: </span><span style="color: #b5ccad;">Int</span><span style="color: #b5ccad;">, amount: </span><span style="color: #b5ccad;">Int</span><span style="color: #e4b8c6;">}</span><span style="color: #a9c99f;"> </span><span style="color: #e4b8c6;">=&gt;
+    exec tool charge o
+  </span><span style="color: #a0a0cf;">)</span> <span style="color: #a0a0cf;">[</span><span style="color: #e4b8c6;">{</span><span style="color: #b5ccad;">id = 1, amount = 100</span><span style="color: #e4b8c6;">}</span><span style="color: #a0a0cf;">]</span> <span style="color: #a0a0cf;">{</span>
+  <span style="color: #e4b8c6;">Ok</span><span style="color: #e4b8c6;">(</span><span style="color: #b5ccad;">receipts</span><span style="color: #e4b8c6;">)</span> <span style="color: #e4b8c6;">=&gt; </span><span style="color: #f271dc5be362;">"done"</span><span style="color: #e4b8c6;">,
+  </span><span style="color: #e4b8c6;">Err</span><span style="color: #e4b8c6;">(</span><span style="color: #b5ccad;">e</span><span style="color: #e4b8c6;">)</span> <span style="color: #e4b8c6;">=&gt; e
+</span><span style="color: #a0a0cf;">}</span>
+</code></pre>
+</div>
+
+<p>
+Unlike Python-based Programmatic Tool Calling implementations, λ-Tool does not require a sandbox because the restrictiveness <i>is</i> the sandbox.
+</p>
+</div>
+</div>
+<div id="outline-container-org29dbcb9" class="outline-2">
+<h2 id="org29dbcb9">Why Types</h2>
+<div class="outline-text-2" id="text-org29dbcb9">
+<p>
+The idea of restricting a language to prevent errors goes back to Alonzo Church, who <a href="https://plato.stanford.edu/entries/type-theory-church/">added types to his lambda calculus</a> in 1940 specifically to forbid nonsense like applying a number to a number. The typed version could express fewer programs, and yet that was the point: the programs you lose are exactly the ones you don't want. Robin Milner took this further with ML, adding type inference and mandatory pattern matching, so the compiler could prove you'd handled every case before the code ran. The <a href="https://cs3110.github.io/textbook/chapters/adv/curry-howard.html">Curry-Howard correspondence</a> formalized why this works: types are propositions, programs are proofs, and a type checker is a proof checker. When λ-Tool rejects a program that doesn't handle <code>Err</code>, it's rejecting an incomplete proof.
+</p>
+
+<p>
+Each of λ-Tool's four guarantees comes from a specific result in this lineage. Row types, from Didier Rémy's work extending ML records in the early 90s, give us field safety: <code>{id: String, email: String}</code> means exactly those fields, and accessing anything else is a compile-time error. Mandatory Result matching is just ML's exhaustive pattern matching applied to tool calls, and bounded iteration (no <code>while</code>, no recursion) gives guaranteed termination.
+</p>
+
+<p>
+The double-write problem, on the other hand, needed something newer. Jean-Yves Girard's <a href="https://ncatlab.org/nlab/show/linear+logic">linear logic</a> introduced the idea that a fact can be used exactly once: when you use it, it's consumed. λ-Tool's <code>!T</code> annotation applies this to values:
+</p>
+<div class="org-src-container">
+<pre class="src src-ocaml"><code><span style="color: #a0a0cf;">fn token: </span><span style="color: #a0a0cf;">!</span><span style="color: #a0a0cf;">String</span><span style="color: #a0a0cf;"> =&gt; </span><span style="color: #a0a0cf;">let</span><span style="color: #a0a0cf;"> </span><span style="color: #a0a0cf;">a</span><span style="color: #a0a0cf;"> = token </span><span style="color: #a0a0cf;">in</span><span style="color: #a0a0cf;"> </span><span style="color: #a0a0cf;">let</span><span style="color: #a0a0cf;"> </span><span style="color: #a0a0cf;">b</span><span style="color: #a0a0cf;"> = token </span><span style="color: #a0a0cf;">in</span><span style="color: #a0a0cf;"> a
+</span><span style="color: #a0a0cf;">(</span><span style="color: #e4b8c6;">* </span><span style="color: #e4b8c6;">Linearity violation for 'token': used 2 times (</span><span style="color: #b5ccad;">must be exactly once</span><span style="color: #e4b8c6;">)</span><span style="color: #a0a0cf;"> </span><span style="color: #e4b8c6;">*</span><span style="color: #a0a0cf;">)</span>
+</code></pre>
+</div>
+
+<p>
+A refund token, an API nonce, a deployment rollback: these are resources that should be consumed exactly once. Linear types enforce that at compile time.
+</p>
+
+<p>
+Jane Street routes hundreds of billions of dollars through OCaml, a direct descendant of ML, because its type system catches at compile time what would be runtime crashes in Python. λ-Tool applies the same tradition to the problem of tool composition by language models.
+</p>
+</div>
+</div>
+<div id="outline-container-org81e237d" class="outline-2">
+<h2 id="org81e237d">Results</h2>
+<div class="outline-text-2" id="text-org81e237d">
+<p>
+I ran both Claude Sonnet and Haiku against 8 PTC tasks, generating both Python and λ-Tool. Both models generated valid λ-Tool on the first try over 94% of the time. The remaining ~4% were parse errors, caught instantly before any tool runs.
+</p>
+
+<p>
+In this experiment, every λ-Tool program that parsed also typed correctly, and every program that typed correctly executed without errors. The Python programs all ran without exceptions too, but that's the problem: several of them contained silent double-write bugs that the sandbox didn't catch. λ-Tool rejected the same patterns at compile time.
+</p>
+
+<p>
+The full experiment setup and results are in the <a href="https://github.com/matchcase/lambda-tool/raw/main/paper/main.pdf">paper</a>.
+</p>
+</div>
+</div>
+<div id="outline-container-org8324efb" class="outline-2">
+<h2 id="org8324efb">Implementation</h2>
+<div class="outline-text-2" id="text-org8324efb">
+<p>
+<a href="https://github.com/matchcase/lambda-tool">λ-Tool</a> is ~2,500 lines of OCaml, containing a lexer, parser, bidirectional type checker, and interpreter. The type checker has 178 tests across three suites, plus 200,000 QCheck-generated random well-typed programs, with zero counterexamples of the type system's guarantees.
+</p>
+
+<p>
+The <a href="https://github.com/matchcase/lambda-tool-python">Python package</a> wraps the OCaml CLI:
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><code><span style="color: #a0a0cf;">from</span><span style="color: #a0a0cf;"> lambda_tool </span><span style="color: #a0a0cf;">import</span><span style="color: #a0a0cf;"> LambdaTool
+
+</span><span style="color: #a0a0cf;">lt</span><span style="color: #a0a0cf;"> = LambdaTool()</span>
+
+<span style="color: #a0a0cf;"># Type-check -- no execution, no side effects</span>
+<span style="color: #a0a0cf;">check</span><span style="color: #a0a0cf;"> = lt.typecheck(</span><span style="color: #e4b8c6;">code</span><span style="color: #a0a0cf;">)</span>
+
+<span style="color: #a0a0cf;"># Execute with real tool implementations</span>
+<span style="color: #a0a0cf;">result</span><span style="color: #a0a0cf;"> = lt.run(</span><span style="color: #e4b8c6;">code, executors={</span>
+    <span style="color: #dadae665d6d6;">"lookup_account"</span><span style="color: #b5ccad;">: real_account_api,
+    </span><span style="color: #dadae665d6d6;">"issue_refund"</span><span style="color: #b5ccad;">: real_refund_api,
+    </span><span style="color: #dadae665d6d6;">"send_reply"</span><span style="color: #b5ccad;">: real_email_api,
+</span><span style="color: #e4b8c6;">}</span><span style="color: #a0a0cf;">)</span>
+</code></pre>
+</div>
+
+<p>
+<a href="https://github.com/matchcase/minilambda">minilambda</a> is a basic (~200 LoC) demo agent that uses this Python package for tool calling. Claude generates λ-Tool code, the type checker verifies it, the interpreter executes it with real Python callbacks. It processes a batch of orders, which includes charging cards and sending receipts, with a simulated ~30% card decline rate. The type system forces Claude to handle the failures, because the code won't compile otherwise.
+</p>
+</div>
+</div>
+<div id="outline-container-orgc5ca6fe" class="outline-2">
+<h2 id="orgc5ca6fe">Links</h2>
+<div class="outline-text-2" id="text-orgc5ca6fe">
+<ul class="org-ul">
+<li><a href="https://github.com/matchcase/lambda-tool">λ-Tool</a>: OCaml type checker and interpreter</li>
+<li><a href="https://github.com/matchcase/lambda-tool-python">lambda-tool-python</a>: Python package</li>
+<li><a href="https://github.com/matchcase/minilambda">minilambda</a>: minimal working agent</li>
+<li><a href="https://github.com/matchcase/lambda-tool/raw/main/paper/main.pdf">Paper</a>: full type system and proofs</li>
+<li><a href="https://github.com/matchcase/lambda-tool/blob/main/skill.md">skill.md</a>: the prompt that teaches Claude to generate λ-Tool code</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org2f1e3d2" class="outline-2">
+<h2 id="org2f1e3d2">About Me</h2>
+<div class="outline-text-2" id="text-org2f1e3d2">
+<p>
+My name is <a href="https://coldboot.org">Sarthak</a> and I like using cross-disciplinary techniques to solve interesting problems. The ivory tower has many spires, and I like building bridges that connect them. If you have something interesting that you would like me to work on, please feel free to <a href="mailto:shahsarthakw@gmail.com">reach out</a>.
+</p>
+</div>
+</div>
