@@ -119,7 +119,7 @@ Jane Street routes hundreds of billions of dollars through OCaml, a direct desce
 
 * Results
 
-I ran both Claude Sonnet and Haiku against 8 PTC tasks, generating both Python and λ-Tool. Both models generated valid λ-Tool on the first try over 94% of the time. The remaining ~4% were parse errors, caught instantly before any tool runs.
+I ran both Claude Sonnet and Haiku against 8 PTC tasks, generating both Python and λ-Tool. Both models generated valid λ-Tool on the first try over 96% of the time. The remaining ~4% were parse errors, caught instantly before any tool runs.
 
 In this experiment, every λ-Tool program that parsed also typed correctly, and every program that typed correctly executed without errors. The Python programs all ran without exceptions too, but that's the problem: several of them contained silent double-write bugs that the sandbox didn't catch. λ-Tool rejected the same patterns at compile time.
 
@@ -158,4 +158,4 @@ result = lt.run(code, executors={
 
 * About Me
 
-My name is [[https://coldboot.org][Sarthak]] and I like using cross-disciplinary techniques to solve interesting problems. The ivory tower has many spires, and I like building bridges that connect them. If you have something interesting that you would like me to work on, please feel free to [[mailto:shahsarthakw@gmail.com][reach out]].
+My name is [[https://blog.coldboot.org/about][Sarthak]] and I like using cross-disciplinary techniques to solve interesting problems. The ivory tower has many spires, and I like building bridges that connect them. If you have something interesting that you would like me to work on, please feel free to [[mailto:shahsarthakw@gmail.com][reach out]].

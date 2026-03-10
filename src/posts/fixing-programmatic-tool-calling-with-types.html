@@ -9,9 +9,9 @@ Anthropic recently introduced <a href="https://platform.claude.com/docs/en/agent
 <p>
 This approach works great in demos, however it runs into a number of issues in production, and they all have the same root cause: Python is <i>too expressive</i> for this job. I created a small, <i>restricted</i> programming language called <a href="https://github.com/matchcase/lambda-tool">λ-Tool</a> in OCaml to solve this problem, and it catches four common tool calling issues at <b>compile time</b>, before a single tool call is made.
 </p>
-<div id="outline-container-orgcedef29" class="outline-2">
-<h2 id="orgcedef29">The Issues</h2>
-<div class="outline-text-2" id="text-orgcedef29">
+<div id="outline-container-orge1dcca9" class="outline-2">
+<h2 id="orge1dcca9">The Issues</h2>
+<div class="outline-text-2" id="text-orge1dcca9">
 <p>
 Say you have a support agent. A customer writes in: "I was charged twice." The LLM looks up the account, issues a refund, sends a reply. Here's the Python code it generates:
 </p>
@@ -58,9 +58,9 @@ The same bugs show up everywhere LLMs compose tools. An incident response bot re
 </p>
 </div>
 </div>
-<div id="outline-container-orgb87e0b4" class="outline-2">
-<h2 id="orgb87e0b4">λ-Tool</h2>
-<div class="outline-text-2" id="text-orgb87e0b4">
+<div id="outline-container-orgdcffeaa" class="outline-2">
+<h2 id="orgdcffeaa">λ-Tool</h2>
+<div class="outline-text-2" id="text-orgdcffeaa">
 <p>
 <a href="https://github.com/matchcase/lambda-tool">λ-Tool</a> makes these four bugs compile-time type errors; the LLM generates λ-Tool code instead of Python, then a type checker verifies the code before any tool runs. If the code is wrong, the LLM gets a type error, fixes it, and resubmits. Nothing executed, so the retry is free.
 </p>
@@ -94,7 +94,7 @@ tool send_reply: {</span><span style="color: #e4b8c6;">to</span><span style="col
 <p>
 Every tool declares its input type, output type, and effects (<code>Read</code>, <code>Write</code>). The types are how the checker knows what fields exist. If the LLM writes <code>account.plan</code>, it gets:
 </p>
-<pre class="example" id="org1219d03">
+<pre class="example" id="org00e2af9">
 Field 'plan' not found in record type
   {id: String, subscription_tier: String, email: String, last_charge_cents: Int}
 </pre>
@@ -137,9 +137,9 @@ Unlike Python-based Programmatic Tool Calling implementations, λ-Tool does not 
 </p>
 </div>
 </div>
-<div id="outline-container-org29dbcb9" class="outline-2">
-<h2 id="org29dbcb9">Why Types</h2>
-<div class="outline-text-2" id="text-org29dbcb9">
+<div id="outline-container-org38b855b" class="outline-2">
+<h2 id="org38b855b">Why Types</h2>
+<div class="outline-text-2" id="text-org38b855b">
 <p>
 The idea of restricting a language to prevent errors goes back to Alonzo Church, who <a href="https://plato.stanford.edu/entries/type-theory-church/">added types to his lambda calculus</a> in 1940 specifically to forbid nonsense like applying a number to a number. The typed version could express fewer programs, and yet that was the point: the programs you lose are exactly the ones you don't want. Robin Milner took this further with ML, adding type inference and mandatory pattern matching, so the compiler could prove you'd handled every case before the code ran. The <a href="https://cs3110.github.io/textbook/chapters/adv/curry-howard.html">Curry-Howard correspondence</a> formalized why this works: types are propositions, programs are proofs, and a type checker is a proof checker. When λ-Tool rejects a program that doesn't handle <code>Err</code>, it's rejecting an incomplete proof.
 </p>
@@ -166,11 +166,11 @@ Jane Street routes hundreds of billions of dollars through OCaml, a direct desce
 </p>
 </div>
 </div>
-<div id="outline-container-org81e237d" class="outline-2">
-<h2 id="org81e237d">Results</h2>
-<div class="outline-text-2" id="text-org81e237d">
+<div id="outline-container-org29bc187" class="outline-2">
+<h2 id="org29bc187">Results</h2>
+<div class="outline-text-2" id="text-org29bc187">
 <p>
-I ran both Claude Sonnet and Haiku against 8 PTC tasks, generating both Python and λ-Tool. Both models generated valid λ-Tool on the first try over 94% of the time. The remaining ~4% were parse errors, caught instantly before any tool runs.
+I ran both Claude Sonnet and Haiku against 8 PTC tasks, generating both Python and λ-Tool. Both models generated valid λ-Tool on the first try over 96% of the time. The remaining ~4% were parse errors, caught instantly before any tool runs.
 </p>
 
 <p>
@@ -182,9 +182,9 @@ The full experiment setup and results are in the <a href="https://github.com/mat
 </p>
 </div>
 </div>
-<div id="outline-container-org8324efb" class="outline-2">
-<h2 id="org8324efb">Implementation</h2>
-<div class="outline-text-2" id="text-org8324efb">
+<div id="outline-container-orgf104852" class="outline-2">
+<h2 id="orgf104852">Implementation</h2>
+<div class="outline-text-2" id="text-orgf104852">
 <p>
 <a href="https://github.com/matchcase/lambda-tool">λ-Tool</a> is ~2,500 lines of OCaml, containing a lexer, parser, bidirectional type checker, and interpreter. The type checker has 178 tests across three suites, plus 200,000 QCheck-generated random well-typed programs, with zero counterexamples of the type system's guarantees.
 </p>
@@ -214,9 +214,9 @@ The <a href="https://github.com/matchcase/lambda-tool-python">Python package</a>
 </p>
 </div>
 </div>
-<div id="outline-container-orgc5ca6fe" class="outline-2">
-<h2 id="orgc5ca6fe">Links</h2>
-<div class="outline-text-2" id="text-orgc5ca6fe">
+<div id="outline-container-org18e63ca" class="outline-2">
+<h2 id="org18e63ca">Links</h2>
+<div class="outline-text-2" id="text-org18e63ca">
 <ul class="org-ul">
 <li><a href="https://github.com/matchcase/lambda-tool">λ-Tool</a>: OCaml type checker and interpreter</li>
 <li><a href="https://github.com/matchcase/lambda-tool-python">lambda-tool-python</a>: Python package</li>
@@ -226,11 +226,11 @@ The <a href="https://github.com/matchcase/lambda-tool-python">Python package</a>
 </ul>
 </div>
 </div>
-<div id="outline-container-org2f1e3d2" class="outline-2">
-<h2 id="org2f1e3d2">About Me</h2>
-<div class="outline-text-2" id="text-org2f1e3d2">
+<div id="outline-container-org3d8ee96" class="outline-2">
+<h2 id="org3d8ee96">About Me</h2>
+<div class="outline-text-2" id="text-org3d8ee96">
 <p>
-My name is <a href="https://coldboot.org">Sarthak</a> and I like using cross-disciplinary techniques to solve interesting problems. The ivory tower has many spires, and I like building bridges that connect them. If you have something interesting that you would like me to work on, please feel free to <a href="mailto:shahsarthakw@gmail.com">reach out</a>.
+My name is <a href="https://blog.coldboot.org/about">Sarthak</a> and I like using cross-disciplinary techniques to solve interesting problems. The ivory tower has many spires, and I like building bridges that connect them. If you have something interesting that you would like me to work on, please feel free to <a href="mailto:shahsarthakw@gmail.com">reach out</a>.
 </p>
 </div>
 </div>
